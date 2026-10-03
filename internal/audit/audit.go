@@ -13,10 +13,10 @@ import (
 type EventType string
 
 const (
-	EventAdmission     EventType = "admission"      // 制品准入判定
-	EventPolicyCommit  EventType = "policy_commit"  // 策略版本提交
+	EventAdmission      EventType = "admission"       // 制品准入判定
+	EventPolicyCommit   EventType = "policy_commit"   // 策略版本提交
 	EventPolicyRollback EventType = "policy_rollback" // 策略回滚
-	EventAccessDenied  EventType = "access_denied"  // 越权请求被拒绝
+	EventAccessDenied   EventType = "access_denied"   // 越权请求被拒绝
 )
 
 // Record 表示一条审计记录。
@@ -29,6 +29,8 @@ type Record struct {
 	PolicyVersion int       // 命中/变更的策略版本
 	Allowed       bool      // 是否放行/成功
 	Reason        string    // 判定依据
+	ReportID      string    // 所属批次报告 ID（单条判定为空）
+	EntryIndex    int       // 批内下标（从 0 开始；非批次记录为 -1）
 }
 
 // Logger 是追加式审计日志。

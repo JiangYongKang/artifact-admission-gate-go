@@ -3,7 +3,7 @@
 // 角色与权限边界：
 //   - admin：提交策略版本、回滚策略；
 //   - releaser：执行制品准入校验；
-//   - auditor：读取审计日志。
+//   - auditor：读取审计日志、只读复核历史批次报告。
 //
 // 未授权请求返回 ErrUnauthorized，调用方必须保证不改变任何状态。
 package authz
@@ -29,10 +29,11 @@ const (
 type Permission string
 
 const (
-	PermAdmit          Permission = "admit"          // 制品准入校验
-	PermPolicyCommit   Permission = "policy_commit"  // 提交策略版本
+	PermAdmit          Permission = "admit"           // 制品准入校验
+	PermPolicyCommit   Permission = "policy_commit"   // 提交策略版本
 	PermPolicyRollback Permission = "policy_rollback" // 回滚策略
-	PermAuditRead      Permission = "audit_read"     // 读取审计日志
+	PermAuditRead      Permission = "audit_read"      // 读取审计日志
+	PermReview         Permission = "review"          // 只读复核历史批次
 )
 
 // grants 是角色到权限的静态映射（最小权限）。
@@ -46,6 +47,7 @@ var grants = map[Role]map[Permission]bool{
 	},
 	RoleAuditor: {
 		PermAuditRead: true,
+		PermReview:    true,
 	},
 }
 

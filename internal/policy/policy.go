@@ -93,6 +93,23 @@ func (s *Store) Current() Policy {
 	return s.versions[s.current]
 }
 
+// Get 按版本号返回历史策略（不移动生效指针、不修改任何状态）。
+// ok 为 false 表示该版本从未存在（可能已从存档中缺失）。
+// 供历史批次复核按报告记录的版本复算使用。
+func (s *Store) Get(version int) (Policy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.versions[version]
+	return p, ok
+}
+
+// CurrentVersion 返回当前生效版本号。
+func (s *Store) CurrentVersion() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.current
+}
+
 // Rollback 将生效版本回滚到指定历史版本，返回回滚后的生效策略。
 // 历史版本不被修改，因此回滚后对同一输入可复现该版本的结论。
 func (s *Store) Rollback(version int) (Policy, error) {
