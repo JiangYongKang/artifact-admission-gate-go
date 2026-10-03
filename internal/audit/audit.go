@@ -13,10 +13,10 @@ import (
 type EventType string
 
 const (
-	EventAdmission     EventType = "admission"      // 制品准入判定
-	EventPolicyCommit  EventType = "policy_commit"  // 策略版本提交
+	EventAdmission      EventType = "admission"       // 制品准入判定
+	EventPolicyCommit   EventType = "policy_commit"   // 策略版本提交
 	EventPolicyRollback EventType = "policy_rollback" // 策略回滚
-	EventAccessDenied  EventType = "access_denied"  // 越权请求被拒绝
+	EventAccessDenied   EventType = "access_denied"   // 越权请求被拒绝
 )
 
 // Record 表示一条审计记录。

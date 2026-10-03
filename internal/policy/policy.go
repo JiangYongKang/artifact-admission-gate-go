@@ -93,6 +93,15 @@ func (s *Store) Current() Policy {
 	return s.versions[s.current]
 }
 
+// Get 只读返回指定的历史版本策略，不改变生效指针。
+// 版本不存在时 ok 为 false，供历史复核区分"引用版本已不存在"这一异常链路。
+func (s *Store) Get(version int) (Policy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.versions[version]
+	return p, ok
+}
+
 // Rollback 将生效版本回滚到指定历史版本，返回回滚后的生效策略。
 // 历史版本不被修改，因此回滚后对同一输入可复现该版本的结论。
 func (s *Store) Rollback(version int) (Policy, error) {

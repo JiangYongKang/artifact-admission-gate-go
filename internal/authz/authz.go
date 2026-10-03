@@ -29,10 +29,10 @@ const (
 type Permission string
 
 const (
-	PermAdmit          Permission = "admit"          // 制品准入校验
-	PermPolicyCommit   Permission = "policy_commit"  // 提交策略版本
+	PermAdmit          Permission = "admit"           // 制品准入校验
+	PermPolicyCommit   Permission = "policy_commit"   // 提交策略版本
 	PermPolicyRollback Permission = "policy_rollback" // 回滚策略
-	PermAuditRead      Permission = "audit_read"     // 读取审计日志
+	PermAuditRead      Permission = "audit_read"      // 读取审计日志
 )
 
 // grants 是角色到权限的静态映射（最小权限）。

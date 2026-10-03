@@ -76,15 +76,16 @@ func TestAdmitGoodArtifact(t *testing.T) {
 func TestRejectTamperedContent(t *testing.T) {
 	g, signer, _ := newGate(t)
 	b := goodBundle(signer, "app.tar.gz", []byte("v1"))
-	// 签名之后篡改内容。
+	// 签名之后篡改内容：必须落到独立的 tampered_content，
+	// 不能与"签名本身不可信"混为一类。
 	b.Artifact.Content = []byte("malicious")
 	d, err := g.Admit(releaser, b)
 	if err != nil {
 		t.Fatalf("准入失败: %v", err)
 	}
 	logDecision(t, "内容被篡改", d)
-	if d.Allowed || d.Reason != gate.ReasonInvalidSignature {
-		t.Fatalf("篡改制品应因 invalid_signature 被拒绝, 得到 %+v", d)
+	if d.Allowed || d.Reason != gate.ReasonTamperedContent {
+		t.Fatalf("篡改制品应因 tampered_content 被拒绝, 得到 %+v", d)
 	}
 }
 
