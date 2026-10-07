@@ -22,10 +22,11 @@ var (
 	// ErrTamperedContent：签名本身有效（可信密钥、签名值与所声明摘要一致），
 	// 但所声明摘要与制品当前内容不一致，即签名之后内容被改动。
 	ErrTamperedContent = errors.New("artifact: 制品内容在签名后被篡改")
-	// ErrIncompleteProvenance：溯源信息缺失或被截断
-	//（链路为空、或呈现为连贯前缀但未通过封存校验）。
+	// ErrIncompleteProvenance：溯源信息不完整
+	//（链路为空、缺少环节、被截断，或封存值缺失/对不上）。
 	ErrIncompleteProvenance = errors.New("artifact: 溯源链不完整")
-	// ErrBrokenProvenance：溯源链结构被破坏（环哈希不连贯、换序、伪造）。
+	// ErrBrokenProvenance：溯源链结构被破坏
+	//（环序号回退/重复即换序或重新拼装、环哈希不连贯即内容被改或伪造）。
 	ErrBrokenProvenance = errors.New("artifact: 溯源链断裂")
 )
 
@@ -201,28 +202,51 @@ func BuildProvenance(a Artifact, steps ...Link) Provenance {
 
 // VerifyProvenance 按固定顺序分诊溯源问题：
 //
-//  1. 链路为空，或封存值缺失/与"起点+末环+总数"对不上
-//     → ErrIncompleteProvenance（溯源缺失或被截断，输入稳定落这一类）；
-//  2. 环哈希不连贯、环序号错误/换序、内容被改 → ErrBrokenProvenance。
+//  1. 链路为空 → ErrIncompleteProvenance；
+//  2. 环序号未严格递增（回退/重复，即换序或重新拼装）→ ErrBrokenProvenance；
+//  3. 环序号严格递增但跳号（中间/开头缺了环节）→ ErrIncompleteProvenance；
+//  4. 环哈希不连贯（环节内容被改、哈希伪造）→ ErrBrokenProvenance；
+//  5. 封存值缺失或与"起点+末环+总数"对不上（截断/封存不完整）
+//     → ErrIncompleteProvenance。
 //
+// 判定边界：凡是"少了环节"（截断、抽环、封存不完整）都稳定落不完整类；
+// 只有确实被伪造、换序、改过环节内容或重新拼装的才落断裂类。
 // 判定只依赖输入，与调用时间、并发顺序、进程无关。
 func VerifyProvenance(a Artifact, p Provenance) error {
 	if len(p.Links) == 0 {
 		return fmt.Errorf("%w: 溯源链为空，缺少构建环节", ErrIncompleteProvenance)
 	}
+
+	// 环序号检查分两步，顺序固定保证分类稳定：
+	// 先整体确认序号严格递增——任何回退/重复都说明链被换序或重新拼装过 → 断裂；
+	// 再确认序号连续——严格递增但跳号说明中间缺了环节 → 不完整（缺环）。
+	prevStep := 0
+	for i, l := range p.Links {
+		if l.Step <= prevStep {
+			return fmt.Errorf("%w: 第 %d 环序号为 %d，未严格递增（疑似换序或重新拼装）",
+				ErrBrokenProvenance, i, l.Step)
+		}
+		prevStep = l.Step
+	}
+	for i, l := range p.Links {
+		if l.Step != i+1 {
+			return fmt.Errorf("%w: 第 %d 环序号为 %d，期望 %d，链路缺少环节",
+				ErrIncompleteProvenance, i, l.Step, i+1)
+		}
+	}
+
+	// 环哈希连贯性：序号连续但哈希对不上，说明环节内容被改或哈希伪造 → 断裂。
 	start := a.Digest()
 	prev := start
 	for i, l := range p.Links {
-		if l.Step != i+1 {
-			return fmt.Errorf("%w: 第 %d 环序号为 %d，期望 %d（疑似换序或缺环）",
-				ErrBrokenProvenance, i, l.Step, i+1)
-		}
 		if want := linkHash(prev, l.Step, l.Builder, l.Note); l.Hash != want {
 			return fmt.Errorf("%w: 第 %d 环(%s/%s)哈希不匹配",
 				ErrBrokenProvenance, i, l.Builder, l.Note)
 		}
 		prev = l.Hash
 	}
+
+	// 封存校验：前缀哈希连贯但封存缺失/不符，说明链被截断或封存不完整 → 不完整。
 	if p.Seal == "" {
 		return fmt.Errorf("%w: 缺少封存值，溯源声明未完整封存（共 %d 环）",
 			ErrIncompleteProvenance, len(p.Links))

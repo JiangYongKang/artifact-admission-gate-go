@@ -103,6 +103,8 @@ func main() {
 	}
 
 	// 引用不存在的历史版本：稳定、可解释。
+	// 注意：策略评估前被拒的条目与策略版本无关，即使报告被改成引用 v404，
+	// 仍按记录原样复现；只有走到策略评估的条目才标记 version_missing。
 	missing := restored
 	missing.PolicyVersion = 404
 	for i := range missing.Entries {
@@ -112,8 +114,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("\n== 四、历史报告引用的 v404 已不存在 ==\n  %s\n",
-		res2.Reviews[0].Note)
+	fmt.Println("\n== 四、历史报告被改为引用不存在的 v404（整批不报错，逐条稳定分诊） ==")
+	for _, rv := range res2.Reviews {
+		fmt.Printf("  #%d %-20s 历史状态=%-16s %s\n", rv.Index, rv.Artifact, rv.HistoryStatus, rv.Note)
+	}
 
 	// 越权：releaser 尝试提交策略；releaser 尝试只读复核。
 	fmt.Println("\n== 五、最小权限 ==")
