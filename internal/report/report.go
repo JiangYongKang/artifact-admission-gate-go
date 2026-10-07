@@ -5,8 +5,11 @@
 // 反复加载复核，不依赖任何外部服务。
 //
 // 复核（Replay）严格只读：不移动生效策略指针、不改动制品状态、不写审计。
-// 报告引用的历史策略版本若已不存在，对应条目稳定返回 version_missing，
-// 而不是偶发报错；历史结论与当前结论始终分列呈现、各自标明策略版本。
+// 在签名/溯源等策略评估之前就被拒的条目，其当时结论与策略版本无关，
+// 复核按报告记录原样复现（not_applicable），绝不误报版本缺失；
+// 只有到达过策略评估的条目引用的历史版本已不存在时，才稳定返回
+// version_missing，而不是偶发报错；历史结论与当前结论始终分列呈现、
+// 各自标明策略版本。
 package report
 
 import (
@@ -45,8 +48,15 @@ type HistoryStatus string
 const (
 	// HistoryAvailable：报告记录的策略版本仍存在，已用其复算历史结论。
 	HistoryAvailable HistoryStatus = "available"
+	// HistoryNotApplicable：该条目在签名/溯源等策略评估之前的环节就被拒，
+	// 当时结论与策略版本无关（记录中 PolicyVersion 为 0），
+	// 历史结论按报告记录原样复现，不涉及历史版本查询，
+	// 因此绝不落入 version_missing。
+	HistoryNotApplicable HistoryStatus = "not_applicable"
 	// HistoryVersionMissing：报告引用的策略版本现在已不存在，
 	// 无法复算历史结论；这是稳定、可解释的结果而非偶发错误。
+	// 只有真正到达过策略评估的条目（allowed / policy_violation）
+	// 才可能落此状态。
 	HistoryVersionMissing HistoryStatus = "version_missing"
 )
 
@@ -172,10 +182,30 @@ func sameDecision(a, b *verdict.Decision) bool {
 	return a.Allowed == b.Allowed && a.Reason == b.Reason
 }
 
+// prePolicyRejection 判断记录的类别是否属于"策略评估前就被拒"。
+// 这些结论由输入校验/签名/溯源环节决定，不依赖任何策略版本，
+// 因此复核时按报告记录原样复现，而不是去查历史策略版本。
+func prePolicyRejection(r verdict.Reason) bool {
+	switch r {
+	case verdict.InvalidInput,
+		verdict.MissingSignature,
+		verdict.UntrustedSignature,
+		verdict.TamperedContent,
+		verdict.IncompleteProvenance,
+		verdict.BrokenProvenance:
+		return true
+	}
+	return false
+}
+
 // Replay 用判定器对一份历史报告做只读复核。
 //
 // 每条记录同时得到：
-//   - historical：用报告记录的策略版本复算的结论；版本已不存在时为 nil 且
+//   - historical：当时结论的复现，分两种情形——
+//     a) 策略评估前就被拒的条目（签名/溯源/空输入类）：结论与策略版本无关，
+//     按报告记录原样复现，HistoryStatus=not_applicable；
+//     b) 到达策略评估的条目（allowed / policy_violation）：用报告记录的
+//     策略版本复算，HistoryStatus=available；版本已不存在时为 nil 且
 //     HistoryStatus=version_missing（稳定可解释，不报错、不静默）；
 //   - current：用当前生效策略复算的结论；尚无生效策略时为 nil。
 //
@@ -192,16 +222,33 @@ func Replay(ev Evaluator, r BatchReport) ReviewResult {
 	for i, rec := range r.Entries {
 		rv := EntryReview{Index: rec.Index, Artifact: rec.Input.Artifact.Name, Recorded: rec}
 
-		// 历史版本复算。
-		hd, ok := ev.EvaluateWithVersion(rec.Input, rec.PolicyVersion)
-		if ok {
-			h := hd
+		// 历史结论复现。
+		if prePolicyRejection(rec.Reason) {
+			// 策略评估前被拒：当时结论与类别不依赖策略版本，
+			// 按报告记录原样复现，绝不误报历史版本缺失。
+			// 这类条目从未命中任何策略，复现结论的版本统一标 0；
+			// 记录中的原始版本字段（若有）仍可在 Recorded 中查阅。
+			h := verdict.Decision{
+				Artifact:      rec.Input.Artifact.Name,
+				Allowed:       rec.Allowed,
+				Reason:        rec.Reason,
+				Detail:        rec.Detail,
+				PolicyVersion: 0,
+			}
 			rv.Historical = &h
-			rv.HistoryStatus = HistoryAvailable
+			rv.HistoryStatus = HistoryNotApplicable
 		} else {
-			rv.HistoryStatus = HistoryVersionMissing
-			rv.Note = fmt.Sprintf("报告引用的策略 v%d 现已不存在，无法复算历史结论",
-				rec.PolicyVersion)
+			// 到达策略评估的条目：用报告记录的策略版本复算。
+			hd, ok := ev.EvaluateWithVersion(rec.Input, rec.PolicyVersion)
+			if ok {
+				h := hd
+				rv.Historical = &h
+				rv.HistoryStatus = HistoryAvailable
+			} else {
+				rv.HistoryStatus = HistoryVersionMissing
+				rv.Note = fmt.Sprintf("报告引用的策略 v%d 现已不存在，无法复算历史结论",
+					rec.PolicyVersion)
+			}
 		}
 
 		// 当前生效版本复算。
@@ -212,6 +259,18 @@ func Replay(ev Evaluator, r BatchReport) ReviewResult {
 
 		// 差异判定与可读说明：历史/当前分列，不合并。
 		switch {
+		case rv.HistoryStatus == HistoryNotApplicable && rv.Current != nil:
+			if !sameDecision(rv.Historical, rv.Current) {
+				rv.Diverged = true
+				rv.Note = fmt.Sprintf(
+					"策略评估前被拒，历史记录: allowed=%v reason=%s；当前 v%d 复算: allowed=%v reason=%s",
+					rv.Historical.Allowed, rv.Historical.Reason,
+					rv.Current.PolicyVersion, rv.Current.Allowed, rv.Current.Reason)
+			} else {
+				rv.Note = fmt.Sprintf(
+					"策略评估前被拒（%s），历史结论按报告记录复现（与策略版本无关）；当前 v%d 复算一致",
+					rv.Historical.Reason, rv.Current.PolicyVersion)
+			}
 		case rv.Historical != nil && rv.Current != nil:
 			if !sameDecision(rv.Historical, rv.Current) {
 				rv.Diverged = true
@@ -224,7 +283,7 @@ func Replay(ev Evaluator, r BatchReport) ReviewResult {
 					rv.Historical.PolicyVersion, rv.Current.PolicyVersion, rv.Historical.Reason)
 			}
 		case rv.Historical != nil && rv.Current == nil:
-			rv.Note = "当前尚无生效策略，仅复算了历史结论"
+			rv.Note = "当前尚无生效策略，仅复现了历史结论"
 		case rv.Historical == nil && rv.Current != nil:
 			rv.Note = fmt.Sprintf("历史版本缺失；当前 v%d 结论: allowed=%v reason=%s",
 				rv.Current.PolicyVersion, rv.Current.Allowed, rv.Current.Reason)

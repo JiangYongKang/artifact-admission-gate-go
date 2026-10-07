@@ -49,15 +49,25 @@ func main() {
 	truncated := buildGood(signer, "app-trunc.tar.gz", []byte("build output v4"))
 	truncated.Provenance = artifact.Provenance{Links: truncated.Provenance.Links[:1]} // 溯源截断
 
+	gapped := buildGood(signer, "app-gapped.tar.gz", []byte("build output v4.1"))
+	full := artifact.BuildProvenance(gapped.Artifact,
+		artifact.Link{Builder: "ci-builder", Note: "compile"},
+		artifact.Link{Builder: "ci-builder", Note: "test"},
+		artifact.Link{Builder: "ci-builder", Note: "release"})
+	gapped.Provenance = artifact.Provenance{
+		Links: []artifact.Link{full.Links[0], full.Links[2]}, // 抽掉中间环节 -> 链路不完整
+		Seal:  full.Seal,
+	}
+
 	broken := buildGood(signer, "app-broken.tar.gz", []byte("build output v5"))
 	broken.Provenance.Links[0], broken.Provenance.Links[1] =
-		broken.Provenance.Links[1], broken.Provenance.Links[0] // 溯源断裂
+		broken.Provenance.Links[1], broken.Provenance.Links[0] // 换序 -> 溯源断裂
 
 	violating := buildGood(signer, "app-banned.tar.gz", []byte("build output v6"))
 	violating.SBOM.Components = append(violating.SBOM.Components, "openssl-1.0") // 策略违规
 
 	fmt.Println("== 一、细粒度失败分诊（批量并发） ==")
-	bundles := []artifact.Bundle{good, tampered, untrusted, unsigned, truncated, broken, violating, {}}
+	bundles := []artifact.Bundle{good, tampered, untrusted, unsigned, truncated, gapped, broken, violating, {}}
 	decisions, rep, err := g.AdmitBatchReport(releaser, bundles)
 	if err != nil {
 		panic(err)
@@ -112,8 +122,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("\n== 四、历史报告引用的 v404 已不存在 ==\n  %s\n",
-		res2.Reviews[0].Note)
+	fmt.Println("\n== 四、历史报告引用的 v404 已不存在（整批不报错，逐条分列） ==")
+	for _, rv := range res2.Reviews {
+		hist := "-"
+		if rv.Historical != nil {
+			hist = fmt.Sprintf("v%d:%s", rv.Historical.PolicyVersion, rv.Historical.Reason)
+		}
+		fmt.Printf("  #%d %-20s 状态=%-14s 历史=%-24s\n    └ %s\n",
+			rv.Index, rv.Artifact, rv.HistoryStatus, hist, rv.Note)
+	}
 
 	// 越权：releaser 尝试提交策略；releaser 尝试只读复核。
 	fmt.Println("\n== 五、最小权限 ==")

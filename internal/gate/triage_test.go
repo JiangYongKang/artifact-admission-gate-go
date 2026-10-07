@@ -54,6 +54,27 @@ func TestTriageCategories(t *testing.T) {
 				b.Provenance.Seal = ""
 				return b
 			}},
+		{"溯源不完整", "抽掉三环链的中间环（保留其余环节与原封存）", gate.ReasonIncompleteProvenance,
+			func(b artifact.Bundle) artifact.Bundle {
+				full := artifact.BuildProvenance(b.Artifact,
+					artifact.Link{Builder: "ci-builder", Note: "compile"},
+					artifact.Link{Builder: "ci-builder", Note: "test"},
+					artifact.Link{Builder: "ci-builder", Note: "release"},
+				)
+				b.Provenance = artifact.Provenance{
+					Links: []artifact.Link{full.Links[0], full.Links[2]},
+					Seal:  full.Seal,
+				}
+				return b
+			}},
+		{"溯源不完整", "截去首环（序号从 2 开始）", gate.ReasonIncompleteProvenance,
+			func(b artifact.Bundle) artifact.Bundle {
+				b.Provenance = artifact.Provenance{
+					Links: b.Provenance.Links[1:],
+					Seal:  b.Provenance.Seal,
+				}
+				return b
+			}},
 		{"溯源断裂", "交换两环顺序", gate.ReasonBrokenProvenance,
 			func(b artifact.Bundle) artifact.Bundle {
 				b.Provenance.Links[0], b.Provenance.Links[1] =

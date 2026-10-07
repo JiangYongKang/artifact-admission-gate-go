@@ -138,15 +138,15 @@ func TestProvenanceTriageDistinct(t *testing.T) {
 		}
 	})
 
-	t.Run("中间环节被抽→断裂", func(t *testing.T) {
+	t.Run("中间环节被抽→不完整", func(t *testing.T) {
 		gapped := artifact.Provenance{
 			Links: []artifact.Link{good.Links[0], good.Links[2]},
 			Seal:  good.Seal,
 		}
 		err := artifact.VerifyProvenance(a, gapped)
 		t.Logf("业务=溯源分诊 输入=抽掉中环 依据=%v", err)
-		if !errors.Is(err, artifact.ErrBrokenProvenance) {
-			t.Fatalf("缺中环应分诊为断裂(序号不连贯), 得到 %v", err)
+		if !errors.Is(err, artifact.ErrIncompleteProvenance) {
+			t.Fatalf("缺中环属于少了关键环节，应分诊为不完整, 得到 %v", err)
 		}
 	})
 
